@@ -70,7 +70,7 @@ parser.add_argument(
 parser.add_argument(
     '-png_save_dir',
     type=str,
-    default='./overlay',
+    default='./overlay_wjj',
     help='directory to save the overlay image'
 )
 

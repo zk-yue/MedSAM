@@ -30,7 +30,7 @@ parser.add_argument(
     '-i',
     '--input_dir',
     type=str,
-    default='test_demo/imgs/',
+    default='/home/yuezk/yzk/SegSEU/validation_dataset/imgs/',
     # required=True,
     help='root directory of the data',
 )
@@ -38,15 +38,18 @@ parser.add_argument(
     '-o',
     '--output_dir',
     type=str,
-    default='test_demo/segs/',
+    default='/home/yuezk/yzk/SegSEU/validation_dataset/segs/',
     help='directory to save the prediction',
 )
+
+"""我们的模型"""
 parser.add_argument(
-    '-lite_medsam_checkpoint_path',
+    '-repvit_256_medsam_checkpoint_path',
     type=str,
-    default="work_dir/LiteMedSAM/lite_medsam.pth",
+    default="./work_dir/RepViT_MedSAM/segseu256_5_13.pth",
     help='path to the checkpoint of MedSAM-Lite',
 )
+
 parser.add_argument(
     '-device',
     type=str,
@@ -68,7 +71,7 @@ parser.add_argument(
 parser.add_argument(
     '-png_save_dir',
     type=str,
-    default='./overlay',
+    default='./overlay_validation',
     help='directory to save the overlay image'
 )
 
@@ -83,11 +86,10 @@ if save_overlay:
     png_save_dir = args.png_save_dir
     makedirs(png_save_dir, exist_ok=True)
 
-lite_medsam_checkpoint_path = args.lite_medsam_checkpoint_path
+repvit_256_medsam_checkpoint_path = args.repvit_256_medsam_checkpoint_path
 makedirs(pred_save_dir, exist_ok=True)
 device = torch.device(args.device)
-# image_size = 256
-image_size = 1024
+image_size =256
 
 def resize_longest_side(image, target_length=256):
     """
@@ -314,86 +316,23 @@ def medsam_inference(medsam_model, img_embed, box_256, new_size, original_size):
     )
 
     low_res_pred = medsam_model.postprocess_masks(low_res_logits, new_size, original_size)
-    low_res_pred = torch.sigmoid(low_res_pred)  
-    low_res_pred = low_res_pred.squeeze().cpu().numpy()  
+    low_res_pred = torch.sigmoid(low_res_pred)
+    low_res_pred = low_res_pred.squeeze().cpu().numpy()
     medsam_seg = (low_res_pred > 0.5).astype(np.uint8)
 
     return medsam_seg, iou
 
-# medsam_lite_image_encoder = TinyViT(
-#     img_size=256,
-#     in_chans=3,
-#     embed_dims=[
-#         64, ## (64, 256, 256)
-#         128, ## (128, 128, 128)
-#         160, ## (160, 64, 64)
-#         320 ## (320, 64, 64) 
-#     ],
-#     depths=[2, 2, 6, 2],
-#     num_heads=[2, 4, 5, 10],
-#     window_sizes=[7, 7, 14, 7],
-#     mlp_ratio=4.,
-#     drop_rate=0.,
-#     drop_path_rate=0.0,
-#     use_checkpoint=False,
-#     mbconv_expand_ratio=4.0,
-#     local_conv_size=3,
-#     layer_lr_decay=0.8
-# )
-
-# medsam_lite_prompt_encoder = PromptEncoder(
-#     embed_dim=256,
-#     image_embedding_size=(64, 64),
-#     input_image_size=(256, 256),
-#     mask_in_chans=16
-# )
-
-# medsam_lite_mask_decoder = MaskDecoder(
-#     num_multimask_outputs=3,
-#         transformer=TwoWayTransformer(
-#             depth=2,
-#             embedding_dim=256,
-#             mlp_dim=2048,
-#             num_heads=8,
-#         ),
-#         transformer_dim=256,
-#         iou_head_depth=3,
-#         iou_head_hidden_dim=256,
-# )
-
-# medsam_lite_model = MedSAM_Lite(
-#     image_encoder = medsam_lite_image_encoder,
-#     mask_decoder = medsam_lite_mask_decoder,
-#     prompt_encoder = medsam_lite_prompt_encoder
-# )
-
-# lite_medsam_checkpoint = torch.load(lite_medsam_checkpoint_path, map_location='cpu')
-# medsam_lite_model.load_state_dict(lite_medsam_checkpoint)
-# medsam_lite_model.to(device)
-# medsam_lite_model.eval()
-
-
-# 导入repvit编码器
+"""替换图像编码器"""
 from repvit_sam import SamAutomaticMaskGenerator, SamPredictor, sam_model_registry
 from timm.models import create_model
-from torch import nn
-# class Student_model(nn.Module):
-#     def __init__(self,image_encoder):
-#         super(Student_model,self).__init__()
-#         self.image_encoder=image_encoder
-#     def forward(self,x):
-#         return self.image_encoder(x)
-# repvit_image_encoder = Student_model(create_model('repvit'))
-repvit_image_encoder = create_model('repvit')
-
-repvit_medsam_prompt_encoder = PromptEncoder(
+medsam_lite_image_encoder = create_model('repvit')
+medsam_lite_prompt_encoder = PromptEncoder(
     embed_dim=256,
     image_embedding_size=(64, 64),
-    input_image_size=(1024, 1024),
+    input_image_size=(256, 256),
     mask_in_chans=16
 )
-
-repvit_medsam_mask_decoder = MaskDecoder(
+medsam_lite_mask_decoder = MaskDecoder(
     num_multimask_outputs=3,
         transformer=TwoWayTransformer(
             depth=2,
@@ -406,18 +345,16 @@ repvit_medsam_mask_decoder = MaskDecoder(
         iou_head_hidden_dim=256,
 )
 
-repvit_medsam_model = MedSAM_Lite(
-    image_encoder = repvit_image_encoder,
-    mask_decoder = repvit_medsam_mask_decoder,
-    prompt_encoder = repvit_medsam_prompt_encoder
+repvit_256_medsam_model = MedSAM_Lite(
+    image_encoder = medsam_lite_image_encoder,
+    mask_decoder = medsam_lite_mask_decoder,
+    prompt_encoder = medsam_lite_prompt_encoder
 )
 
-repvit_medsam_checkpoint_path='./work_dir/RepViT_MedSAM/medsam_repvit.pth'
-repvit_medsam_checkpoint = torch.load(repvit_medsam_checkpoint_path, map_location='cpu')
-repvit_medsam_model.load_state_dict(repvit_medsam_checkpoint)
-repvit_medsam_model.to(device)
-repvit_medsam_model.eval()
-
+repvit_256_medsam_checkpoint = torch.load(repvit_256_medsam_checkpoint_path, map_location='cpu')
+repvit_256_medsam_model.load_state_dict(repvit_256_medsam_checkpoint)
+repvit_256_medsam_model.to(device)
+repvit_256_medsam_model.eval()
 
 def MedSAM_infer_npz_2D(img_npz_file):
     npz_name = basename(img_npz_file)
@@ -429,22 +366,20 @@ def MedSAM_infer_npz_2D(img_npz_file):
     segs = np.zeros(img_3c.shape[:2], dtype=np.uint8)
 
     ## preprocessing
-    # img_256 = resize_longest_side(img_3c, 256)
-    img_256 = resize_longest_side(img_3c, 1024)
+    img_256 = resize_longest_side(img_3c, 256)
     newh, neww = img_256.shape[:2]
     img_256_norm = (img_256 - img_256.min()) / np.clip(
         img_256.max() - img_256.min(), a_min=1e-8, a_max=None
     )
-    # img_256_padded = pad_image(img_256_norm, 256)
-    img_256_padded = pad_image(img_256_norm, 1024)
+    img_256_padded = pad_image(img_256_norm, 256)
     img_256_tensor = torch.tensor(img_256_padded).float().permute(2, 0, 1).unsqueeze(0).to(device)
     with torch.no_grad():
-        image_embedding = repvit_medsam_model.image_encoder(img_256_tensor)
+        image_embedding = repvit_256_medsam_model.image_encoder(img_256_tensor)
 
     for idx, box in enumerate(boxes, start=1):
         box256 = resize_box_to_256(box, original_size=(H, W))
         box256 = box256[None, ...] # (1, 4)
-        medsam_mask, iou_pred = medsam_inference(repvit_medsam_model, image_embedding, box256, (newh, neww), (H, W))
+        medsam_mask, iou_pred = medsam_inference(repvit_256_medsam_model, image_embedding, box256, (newh, neww), (H, W))
         segs[medsam_mask>0] = idx
         # print(f'{npz_name}, box: {box}, predicted iou: {np.round(iou_pred.item(), 4)}')
    
@@ -499,32 +434,31 @@ def MedSAM_infer_npz_3D(img_npz_file):
                 img_3c = img_2d
             H, W, _ = img_3c.shape
 
-            # img_256 = resize_longest_side(img_3c, 256)
-            img_256 = resize_longest_side(img_3c, 1024)
+            img_256 = resize_longest_side(img_3c,256)
             new_H, new_W = img_256.shape[:2]
 
             img_256 = (img_256 - img_256.min()) / np.clip(
                 img_256.max() - img_256.min(), a_min=1e-8, a_max=None
             )  # normalize to [0, 1], (H, W, 3)
             ## Pad image to 256x256
-            img_256 = pad_image(img_256,1024)
+            img_256 = pad_image(img_256)
             
             # convert the shape to (3, H, W)
             img_256_tensor = torch.tensor(img_256).float().permute(2, 0, 1).unsqueeze(0).to(device)
             # get the image embedding
             with torch.no_grad():
-                image_embedding = repvit_medsam_model.image_encoder(img_256_tensor) # (1, 256, 64, 64)
+                image_embedding = repvit_256_medsam_model.image_encoder(img_256_tensor) # (1, 256, 64, 64)
             if z == z_middle:
                 box_256 = resize_box_to_256(mid_slice_bbox_2d, original_size=(H, W))
             else:
-                pre_seg = segs_3d_temp[z-1, :, :]
-                pre_seg256 = resize_longest_side(pre_seg)
-                if np.max(pre_seg256) > 0:
-                    pre_seg256 = pad_image(pre_seg256,1024)
+                pre_seg = segs[z-1, :, :]
+                if np.max(pre_seg) > 0:
+                    pre_seg256 = resize_longest_side(pre_seg)
+                    pre_seg256 = pad_image(pre_seg256)
                     box_256 = get_bbox256(pre_seg256)
                 else:
                     box_256 = resize_box_to_256(mid_slice_bbox_2d, original_size=(H, W))
-            img_2d_seg, iou_pred = medsam_inference(repvit_medsam_model, image_embedding, box_256, [new_H, new_W], [H, W])
+            img_2d_seg, iou_pred = medsam_inference(repvit_256_medsam_model, image_embedding, box_256, [new_H, new_W], [H, W])
             segs_3d_temp[z, img_2d_seg>0] = idx
         
         # infer from middle slice to the z_max
@@ -544,21 +478,22 @@ def MedSAM_infer_npz_3D(img_npz_file):
                 img_256.max() - img_256.min(), a_min=1e-8, a_max=None
             )  # normalize to [0, 1], (H, W, 3)
             ## Pad image to 256x256
-            img_256 = pad_image(img_256,1024)
+            img_256 = pad_image(img_256)
 
             img_256_tensor = torch.tensor(img_256).float().permute(2, 0, 1).unsqueeze(0).to(device)
             # get the image embedding
             with torch.no_grad():
-                image_embedding = repvit_medsam_model.image_encoder(img_256_tensor) # (1, 256, 64, 64)
+                image_embedding = repvit_256_medsam_model.image_encoder(img_256_tensor) # (1, 256, 64, 64)
 
-            pre_seg = segs_3d_temp[z+1, :, :]
-            pre_seg256 = resize_longest_side(pre_seg)
-            if np.max(pre_seg256) > 0:
-                pre_seg256 = pad_image(pre_seg256,1024)
-                box_256 = get_bbox256(pre_seg256,1024)
+            pre_seg = segs[z+1, :, :]
+            if np.max(pre_seg) > 0:
+                pre_seg256 = resize_longest_side(pre_seg)
+                pre_seg256 = pad_image(pre_seg256)
+                box_256 = get_bbox256(pre_seg256)
             else:
-                box_256 = resize_box_to_256(mid_slice_bbox_2d, original_size=(H, W))
-            img_2d_seg, iou_pred = medsam_inference(repvit_medsam_model, image_embedding, box_256, [new_H, new_W], [H, W])
+                scale_256 = 256 / max(H, W)
+                box_256 = mid_slice_bbox_2d * scale_256
+            img_2d_seg, iou_pred = medsam_inference(repvit_256_medsam_model, image_embedding, box_256, [new_H, new_W], [H, W])
             segs_3d_temp[z, img_2d_seg>0] = idx
         segs[segs_3d_temp>0] = idx
     np.savez_compressed(
@@ -573,7 +508,7 @@ def MedSAM_infer_npz_3D(img_npz_file):
         ax[0].imshow(img_3D[idx], cmap='gray')
         ax[1].imshow(img_3D[idx], cmap='gray')
         ax[0].set_title("Image")
-        ax[1].set_title("repvit_medsam Segmentation")
+        ax[1].set_title("ours Segmentation")
         ax[0].axis('off')
         ax[1].axis('off')
 
@@ -607,4 +542,5 @@ if __name__ == '__main__':
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print(current_time, 'file name:', basename(img_npz_file), 'time cost:', np.round(end_time - start_time, 4))
     efficiency_df = pd.DataFrame(efficiency)
-    efficiency_df.to_csv(join(pred_save_dir, 'efficiency.csv'), index=False)
+    current_date = datetime.now().strftime("%Y%m%d_%H%M%S")
+    efficiency_df.to_csv(join(pred_save_dir, f'efficiency_{current_date}.csv'), index=False)

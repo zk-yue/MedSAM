@@ -22,34 +22,39 @@ import torch.nn.functional as F
 
 from matplotlib import pyplot as plt
 import argparse
-# /home/yuezk/下载/CVPR24_LiteMedSAM_infer256.py# %%
+
+
+
+# %%
 parser = argparse.ArgumentParser()
 parser.add_argument(
-    "-data_root", type=str, default="./data/npy",
+    "-data_root", type=str, default="./data/npy/",
     help="Path to the npy data root."
 )
+# parser.add_argument(
+#     # "-pretrained_checkpoint", type=str, default="lite_medsam.pth",
+#     "-pretrained_checkpoint", type=str, default="./work_dir/SegSEU_1.pth",
+#     help="Path to the pretrained Lite-MedSAM checkpoint."
+# )
 parser.add_argument(
-    "-pretrained_checkpoint", type=str, default="lite_medsam.pth",
-    help="Path to the pretrained Lite-MedSAM checkpoint."
-)
-parser.add_argument(
-    "-resume", type=str, default='workdir/medsam_lite_latest.pth',
+    # "-resume", type=str, default='workdir/medsam_lite_latest.pth',
+    "-resume", type=str, default=None,
     help="Path to the checkpoint to continue training."
 )
 parser.add_argument(
-    "-work_dir", type=str, default="./workdir",
+    "-work_dir", type=str, default="./work_dir/finetune_model/",
     help="Path to the working directory where checkpoints and logs will be saved."
 )
 parser.add_argument(
-    "-num_epochs", type=int, default=10,
+    "-num_epochs", type=int, default=3,
     help="Number of epochs to train."
 )
 parser.add_argument(
-    "-batch_size", type=int, default=4,
+    "-batch_size", type=int, default=1,
     help="Batch size."
 )
 parser.add_argument(
-    "-num_workers", type=int, default=8,
+    "-num_workers", type=int, default=0,
     help="Number of workers for dataloader."
 )
 parser.add_argument(
@@ -89,7 +94,7 @@ args = parser.parse_args()
 # %%
 work_dir = args.work_dir
 data_root = args.data_root
-medsam_lite_checkpoint = args.pretrained_checkpoint
+# medsam_lite_checkpoint = args.pretrained_checkpoint
 num_epochs = args.num_epochs
 batch_size = args.batch_size
 num_workers = args.num_workers
@@ -317,39 +322,22 @@ class MedSAM_Lite(nn.Module):
             mode="bilinear",
             align_corners=False,
         )
-
         return masks
 
-# %%
-medsam_lite_image_encoder = TinyViT(
-    img_size=256,
-    in_chans=3,
-    embed_dims=[
-        64, ## (64, 256, 256)
-        128, ## (128, 128, 128)
-        160, ## (160, 64, 64)
-        320 ## (320, 64, 64) 
-    ],
-    depths=[2, 2, 6, 2],
-    num_heads=[2, 4, 5, 10],
-    window_sizes=[7, 7, 14, 7],
-    mlp_ratio=4.,
-    drop_rate=0.,
-    drop_path_rate=0.0,
-    use_checkpoint=False,
-    mbconv_expand_ratio=4.0,
-    local_conv_size=3,
-    layer_lr_decay=0.8
-)
 
-medsam_lite_prompt_encoder = PromptEncoder(
+from repvit_sam import SamAutomaticMaskGenerator, SamPredictor, sam_model_registry
+from timm.models import create_model
+
+repvit_image_encoder = create_model('repvit')
+
+repvit_medsam_prompt_encoder = PromptEncoder(
     embed_dim=256,
     image_embedding_size=(64, 64),
     input_image_size=(256, 256),
     mask_in_chans=16
 )
 
-medsam_lite_mask_decoder = MaskDecoder(
+repvit_medsam_mask_decoder = MaskDecoder(
     num_multimask_outputs=3,
         transformer=TwoWayTransformer(
             depth=2,
@@ -362,31 +350,32 @@ medsam_lite_mask_decoder = MaskDecoder(
         iou_head_hidden_dim=256,
 )
 
-medsam_lite_model = MedSAM_Lite(
-    image_encoder = medsam_lite_image_encoder,
-    mask_decoder = medsam_lite_mask_decoder,
-    prompt_encoder = medsam_lite_prompt_encoder
+repvit_medsam_model = MedSAM_Lite(
+    image_encoder = repvit_image_encoder,
+    mask_decoder = repvit_medsam_mask_decoder,
+    prompt_encoder = repvit_medsam_prompt_encoder
 )
 
-if medsam_lite_checkpoint is not None:
-    if isfile(medsam_lite_checkpoint):
-        print(f"Finetuning with pretrained weights {medsam_lite_checkpoint}")
-        medsam_lite_ckpt = torch.load(
-            medsam_lite_checkpoint,
+repvit_medsam_checkpoint = "./work_dir/RepViT_MedSAM/segseu256_5_13.pth"
+if repvit_medsam_checkpoint is not None:
+    if isfile(repvit_medsam_checkpoint):
+        print(f"Finetuning with pretrained weights {repvit_medsam_checkpoint}")
+        repvit_medsam_ckpt = torch.load(
+            repvit_medsam_checkpoint,
             map_location="cpu"
         )
-        medsam_lite_model.load_state_dict(medsam_lite_ckpt, strict=True)
+        repvit_medsam_model.load_state_dict(repvit_medsam_ckpt, strict=True)
     else:
-        print(f"Pretained weights {medsam_lite_checkpoint} not found, training from scratch")
+        print(f"Pretained weights {repvit_medsam_checkpoint} not found, training from scratch")
 
-medsam_lite_model = medsam_lite_model.to(device)
-medsam_lite_model.train()
+repvit_medsam_model = repvit_medsam_model.to(device)
+repvit_medsam_model.train()
 
 # %%
-print(f"MedSAM Lite size: {sum(p.numel() for p in medsam_lite_model.parameters())}")
+print(f"MedSAM Lite size: {sum(p.numel() for p in repvit_medsam_model.parameters())}")
 # %%
 optimizer = optim.AdamW(
-    medsam_lite_model.parameters(),
+    repvit_medsam_model.parameters(),
     lr=lr,
     betas=(0.9, 0.999),
     eps=1e-08,
@@ -409,7 +398,7 @@ train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, nu
 if checkpoint and isfile(checkpoint):
     print(f"Resuming from checkpoint {checkpoint}")
     checkpoint = torch.load(checkpoint)
-    medsam_lite_model.load_state_dict(checkpoint["model"], strict=True)
+    repvit_medsam_model.load_state_dict(checkpoint["model"], strict=True)
     optimizer.load_state_dict(checkpoint["optimizer"])
     start_epoch = checkpoint["epoch"]
     best_loss = checkpoint["loss"]
@@ -429,7 +418,7 @@ for epoch in range(start_epoch + 1, num_epochs):
         boxes = batch["bboxes"]
         optimizer.zero_grad()
         image, gt2D, boxes = image.to(device), gt2D.to(device), boxes.to(device)
-        logits_pred, iou_pred = medsam_lite_model(image, boxes)
+        logits_pred, iou_pred = repvit_medsam_model(image, boxes)
         l_seg = seg_loss(logits_pred, gt2D)
         l_ce = ce_loss(logits_pred, gt2D.float())
         #mask_loss = l_seg + l_ce
@@ -448,7 +437,7 @@ for epoch in range(start_epoch + 1, num_epochs):
     epoch_loss_reduced = sum(epoch_loss) / len(epoch_loss)
     train_losses.append(epoch_loss_reduced)
     lr_scheduler.step(epoch_loss_reduced)
-    model_weights = medsam_lite_model.state_dict()
+    model_weights = repvit_medsam_model.state_dict()
     checkpoint = {
         "model": model_weights,
         "epoch": epoch,
@@ -456,7 +445,8 @@ for epoch in range(start_epoch + 1, num_epochs):
         "loss": epoch_loss_reduced,
         "best_loss": best_loss,
     }
-    torch.save(checkpoint, join(work_dir, "medsam_lite_latest.pth"))
+    current_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    torch.save(checkpoint, join(work_dir, f"medsam_lite_{current_time}.pth"))
     if epoch_loss_reduced < best_loss:
         print(f"New best loss: {best_loss:.4f} -> {epoch_loss_reduced:.4f}")
         best_loss = epoch_loss_reduced
