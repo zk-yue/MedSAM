@@ -99,7 +99,6 @@ class Residual(torch.nn.Module):
         else:
             return self
 
-
 class RepVGGDW(torch.nn.Module):
     def __init__(self, ed) -> None:
         super().__init__()

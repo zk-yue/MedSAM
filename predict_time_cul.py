@@ -1,9 +1,11 @@
+import torch
+import torch.nn as nn
+import time
 # -*- coding: utf-8 -*-
 # %% load environment
 import numpy as np
 import matplotlib.pyplot as plt
 import os
-
 join = os.path.join
 import torch
 from segment_anything import sam_model_registry
@@ -11,25 +13,6 @@ from skimage import io, transform
 import torch.nn.functional as F
 import argparse
 
-# visualization functions
-# source: https://github.com/facebookresearch/segment-anything/blob/main/notebooks/predictor_example.ipynb
-# change color to avoid red and green
-def show_mask(mask, ax, random_color=False):
-    if random_color:
-        color = np.concatenate([np.random.random(3), np.array([0.6])], axis=0)
-    else:
-        color = np.array([251 / 255, 252 / 255, 30 / 255, 0.6])
-    h, w = mask.shape[-2:]
-    mask_image = mask.reshape(h, w, 1) * color.reshape(1, 1, -1)
-    ax.imshow(mask_image)
-
-
-def show_box(box, ax):
-    x0, y0 = box[0], box[1]
-    w, h = box[2] - box[0], box[3] - box[1]
-    ax.add_patch(
-        plt.Rectangle((x0, y0), w, h, edgecolor="blue", facecolor=(0, 0, 0, 0), lw=2)
-    )
 
 
 @torch.no_grad()
@@ -171,21 +154,60 @@ io.imsave(
     check_contrast=False,
 )
 
-# %% visualize results
-fig, ax = plt.subplots(1, 4, figsize=(15, 5))
-ax[0].imshow(img_3c)
-show_box(box_np[0], ax[0])
-ax[0].set_title("Input Image and Bounding Box")
-ax[1].imshow(img_3c)
-show_mask(medsam_seg, ax[1])
-show_box(box_np[0], ax[1])
-ax[1].set_title("MedSAM Segmentation")
-ax[2].imshow(img_3c)
-show_mask(repvit_seg, ax[2])
-show_box(box_np[0], ax[2])
-ax[2].set_title("RepViT MedSAM Segmentation")
-ax[3].imshow(img_3c)
-show_mask(img_gt, ax[3])
-show_box(box_np[0], ax[3])
-ax[3].set_title("gts")
-plt.show()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# 定义一个简单的CNN模型
+class SimpleCNN(nn.Module):
+    def __init__(self):
+        super(SimpleCNN, self).__init__()
+        self.conv1 = nn.Conv2d(3, 16, kernel_size=3, padding=1)
+        self.act1 = nn.ReLU()
+        self.pool1 = nn.MaxPool2d(kernel_size=2)
+        self.fc1 = nn.Linear(16 * 16 * 16, 10)  # 假设输入图像大小为32x32
+
+    def forward(self, x):
+        x = self.pool1(self.act1(self.conv1(x)))
+        x = x.view(x.size(0), -1)  # 展平
+        x = self.fc1(x)
+        return x
+
+# 创建模型实例并转移到适当的设备
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model = SimpleCNN().to(device)
+
+# 创建一个随机输入张量，假设输入大小为32x32 RGB图像
+input_tensor = torch.randn(1, 3, 32, 32, device=device)
+
+# 热身GPU（如果使用的话），进行几次前向传播以避免启动延迟
+for _ in range(10):
+    model(input_tensor)
+
+# 开始计时
+start_time = time.time()
+
+# 执行正向推理
+output = model(input_tensor)
+
+# 结束计时
+end_time = time.time()
+
+# 计算并打印所需时间
+print(f"Forward pass took {end_time - start_time:.6f} seconds.")

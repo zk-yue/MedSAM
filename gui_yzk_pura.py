@@ -88,31 +88,79 @@ def medsam_inference(medsam_model, img_embed, box_1024, height, width):
 print("Loading MedSAM model, a sec.")
 tic = time.perf_counter()
 
-# set up model
-medsam_model = sam_model_registry["vit_b"](checkpoint=MedSAM_CKPT_PATH).to(device)
-# medsam_model.eval()
-
 
 # 导入repvit编码器
 from repvit_sam import SamAutomaticMaskGenerator, SamPredictor, sam_model_registry
+from segment_anything.modeling import MaskDecoder, PromptEncoder, TwoWayTransformer
 from timm.models import create_model
 from torch import nn
-class Student_model(nn.Module):
-    def __init__(self,image_encoder):
-        super(Student_model,self).__init__()
-        self.image_encoder=image_encoder
-    def forward(self,x):
-        return self.image_encoder(x)
-repvit_image_encoder = Student_model(create_model('repvit'))
-checkpoint="./work_dir/RepViT_MedSAM/student_model_2024_05_08_23_42.pth"
-with open(checkpoint, "rb") as f:
-    state_dict = torch.load(f)
-repvit_image_encoder.load_state_dict(state_dict['model'])
-medsam_model.image_encoder=repvit_image_encoder #.image_encoder
-medsam_model = medsam_model.to(device)
-medsam_model.eval()
+class MedSAM_Lite(nn.Module):
+    def __init__(
+            self, 
+            image_encoder, 
+            mask_decoder,
+            prompt_encoder
+        ):
+        super().__init__()
+        self.image_encoder = image_encoder
+        self.mask_decoder = mask_decoder
+        self.prompt_encoder = prompt_encoder
 
-torch.save(medsam_model.state_dict(), "./work_dir/RepViT_MedSAM/medsam_repvit.pth") # 保存权重的时候medsam_model.image_encoder=repvit_image_encoder要加上.image_encoder
+    def forward(self, image, box_np):
+        image_embedding = self.image_encoder(image) # (B, 256, 64, 64)
+        # do not compute gradients for prompt encoder
+        with torch.no_grad():
+            box_torch = torch.as_tensor(box_np, dtype=torch.float32, device=image.device)
+            if len(box_torch.shape) == 2:
+                box_torch = box_torch[:, None, :] # (B, 1, 4)
+
+        sparse_embeddings, dense_embeddings = self.prompt_encoder(
+            points=None,
+            boxes=box_np,
+            masks=None,
+        )
+        low_res_masks, iou_predictions = self.mask_decoder(
+            image_embeddings=image_embedding, # (B, 256, 64, 64)
+            image_pe=self.prompt_encoder.get_dense_pe(), # (1, 256, 64, 64)
+            sparse_prompt_embeddings=sparse_embeddings, # (B, 2, 256)
+            dense_prompt_embeddings=dense_embeddings, # (B, 256, 64, 64)
+            multimask_output=False,
+          ) # (B, 1, 256, 256)
+
+        return low_res_masks
+repvit_image_encoder = create_model('repvit')
+
+repvit_medsam_prompt_encoder = PromptEncoder(
+    embed_dim=256,
+    image_embedding_size=(64, 64),
+    input_image_size=(1024, 1024),
+    mask_in_chans=16
+)
+
+repvit_medsam_mask_decoder = MaskDecoder(
+    num_multimask_outputs=3,
+        transformer=TwoWayTransformer(
+            depth=2,
+            embedding_dim=256,
+            mlp_dim=2048,
+            num_heads=8,
+        ),
+        transformer_dim=256,
+        iou_head_depth=3,
+        iou_head_hidden_dim=256,
+)
+
+repvit_medsam_model = MedSAM_Lite(
+    image_encoder = repvit_image_encoder,
+    mask_decoder = repvit_medsam_mask_decoder,
+    prompt_encoder = repvit_medsam_prompt_encoder
+)
+
+repvit_medsam_checkpoint_path='./work_dir/RepViT_MedSAM/medsam_repvit.pth'
+repvit_medsam_checkpoint = torch.load(repvit_medsam_checkpoint_path, map_location='cpu')
+repvit_medsam_model.load_state_dict(repvit_medsam_checkpoint)
+repvit_medsam_model.to(device)
+repvit_medsam_model.eval()
 
 print(f"Done, took {time.perf_counter() - tic}")
 
@@ -303,7 +351,7 @@ class Window(QWidget):
         # print("bounding box:", box_np)
         box_1024 = box_np / np.array([W, H, W, H]) * 1024
 
-        sam_mask = medsam_inference(medsam_model, self.embedding, box_1024, H, W)
+        sam_mask = medsam_inference(repvit_medsam_model, self.embedding, box_1024, H, W)
 
         self.prev_mask = self.mask_c.copy()
         self.mask_c[sam_mask != 0] = colors[self.color_idx % len(colors)]
@@ -336,7 +384,7 @@ class Window(QWidget):
 
         # if self.embedding is None:
         with torch.no_grad():
-            self.embedding = medsam_model.image_encoder(
+            self.embedding = repvit_medsam_model.image_encoder(
                 img_1024_tensor
             )  # (1, 256, 64, 64)
         print("Done.")
