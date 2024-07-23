@@ -68,7 +68,7 @@ def save_numpy_as_png(array, file_path):
 # save_numpy_as_png(gray_image, 'gray_image.png')
 # save_numpy_as_png(color_image, 'color_image.png')
 
-image_input=np.load("./data/sample/npy/imgs/XRay_Chest-Xray-Masks-and-Labels_MCUCXR_0393_1.npy")
+image_input=np.load("./data/sample/npy/imgs/XRay_COVID-19-Radiography-Database_COVID-1.npy")
 # image_input = transform.resize(
 #     image_input, (512, 512), order=3, preserve_range=True, anti_aliasing=True
 # ).astype(np.uint8)
@@ -77,4 +77,4 @@ img_resize = resize_longest_side(image_input)
 # Resizing
 img_resize = (img_resize - img_resize.min()) / np.clip(img_resize.max() - img_resize.min(), a_min=1e-8, a_max=None) # normalize to [0, 1], (H, W, 3
 img_padded = pad_image(img_resize) # (256, 256, 3)
-save_numpy_as_png((img_padded*255).astype(np.uint8), 'XRay_Chest-Xray-Masks-and-Labels_MCUCXR_0393_1.png')
+save_numpy_as_png((img_padded*255).astype(np.uint8), 'XRay_COVID-19-Radiography-Database_COVID-1.png')
